@@ -1,151 +1,126 @@
-(** Rotor wiring tables *)
-(** Rotors I, II, III extracted from Enigma I and IV, V from M3 Army *)
-(*
-let rotors =
-  [| "EKMFLGDQVZNTOWYHXUSPAIBRCJ" ;
-     "AJDKSIRUXBLHWTMCQGZNPYFVOE" ;
-     "BDFHJLCPRTXVZNYEIWGAKMUSQO" ;
-     "ESOVPZJAYQUIRHXLNFTGKDCMWB" ;
-     "VZBRGITYUPSDNHLXAWMJQOFECK" ;
-     "JPGVOUMFYQBENHZRDKASXLICTW" ;
-     "NZJHGRCXMYSWBOUFAIVLPEKQDT" ;
-     "FKQHTLXOCBJSPDZRAMEWNIUYGV" |]
+(**
+   Wehrmacht Enigma I
+   Functional-style execution of a historic encryption machine in OCaml
+
+   Hai Nguyen Van
+   Laboratoire de Recherche en Informatique, Université Paris-Sud
+   
+   Released under the terms of the CeCILL License
 *)
-let enigmaI_rotor_I = "EKMFLGDQVZNTOWYHXUSPAIBRCJ"
-and enigmaI_rotor_II = "AJDKSIRUXBLHWTMCQGZNPYFVOE"
-and enigmaI_rotor_III = "BDFHJLCPRTXVZNYEIWGAKMUSQO"
 
-let rot0 = [| enigmaI_rotor_I ; enigmaI_rotor_II ; enigmaI_rotor_III |]
+let explode s =
+  let clist = ref [] in
+  let () = String.iter (fun c -> clist := !clist @ [c]) s in
+  !clist;;
+
+let alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+(* [x] @~ [n] is the modulo of the class of [x] in Z/[n]Z *)
+let ( @~ ) = fun x n -> if x > -1 then x mod n else n - (abs x mod n);;
+
+(* [c] >+ [n] is the character [c] shifted by [n] characters *)
+let ( >+ ) = fun char n ->
+  let alphabet_size = String.length alphabet in
+  char_of_int ((((int_of_char char - int_of_char 'A') + n) @~ alphabet_size) + int_of_char 'A')
+
+(* [c1] >-< [c2] is the signed distance between [c1] and [c2] *)
+let ( >-< ) = fun c1 c2 -> int_of_char c1 - int_of_char c2
+
+(** Rotor *)
 type position = Left | Middle | Right
-
 let ( @* ) = fun char (rotors, pos) ->
   let no_of_x = (int_of_char char) - (int_of_char 'A') in
   (rotors. (match pos with Left -> 0 | Middle -> 1 | Right -> 2)). [no_of_x];;
 
-(** Wide-B reflector *)
-let wide_b_refl = "YRUHQSLDPXNGOKMIEBFZCWVJAT"
-
+(** Reflector *)
 let ( @$ ) = fun char reflector ->
   let no_of_x = (int_of_char char) - (int_of_char 'A') in
   reflector.[no_of_x];;
 
 (** Plugboard *)
-let pb0 =
-  [('A', 'D') ; ('C', 'N') ; ('E', 'T') ; ('F', 'L') ;
-   ('G', 'I') ; ('J', 'V') ; ('K', 'Z') ; ('P', 'U') ;
-   ('Q', 'Y') ; ('W', 'X')]
-
-
-let ( @! ) =
+let ( @% ) =
   let list_op l = List.map (fun (x, y) -> (y, x)) l in
   fun char plugboard -> try (List.assoc char plugboard) with
     | Not_found -> (try (List.assoc char (list_op plugboard)) with
 	 | Not_found -> char
     );;
 
-(** Rotor shifting *)
-let sh0 = Array.map (fun rotor -> 0) rot0;;
+(** Rotor Turnover *)
+exception StopTurn;;
 
-let alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-and beta = "BCDEFGHIJKLMNOPQRSTUVWXYZA"
+(* Rotor one step *)
+let ( @^ ) = fun s _ ->
+  let shifts = List.map2 (fun x y -> x >-< y) (explode s) (explode alphabet) in
+  let shifts_turned = match shifts with
+    | h :: l -> l @ [h]
+    | _ -> assert false in
+  let new_rotor = List.map2 (fun x y -> x >+ y) (explode alphabet) shifts_turned in
+  for i = 0 to List.length new_rotor - 1 do
+    s.[i] <- List.nth new_rotor i
+  done
+;;
 
-exception StopShift;;
-
-let ( @^ ) = fun rotors shift_index ->
-  let shift s =
-    for i = 0 to String.length s - 1 do
-      s.[i] <- (beta.[i] >+ (alpha.[i] >-< s.[i]))
-    done in
+(* Rotors turnover by lexicographic enumeration *)
+let ( @^^^ ) = fun x (rotors, shift_index) ->
+  let alphabet_size = String.length alphabet in
   try
-    for i = 0 to Array.length rotors - 1 do
-      match i with
-	 | 0 -> 
-	   shift_index.(0) <- (shift_index.(0) + 1) mod 26 ;
-	   shift rotors.(0)
-	 | _ ->
+    begin
+      for i = 0 to Array.length rotors - 1 do
+	 match i with
+	   | 0 -> 
+	     shift_index.(0) <- (shift_index.(0) + 1) mod alphabet_size ;
+	     rotors.(0) @^ ()
+	   | _ ->
 	     if shift_index.(i - 1) = 0
 	     then
-		shift_index.(i) <- (shift_index.(i) + 1) mod 26 ;
-		shift rotors.(i)
-	     else raise StopShift
-    done
-  with StopShift -> ()
+		begin
+		  shift_index.(i) <- (shift_index.(i) + 1) mod alphabet_size ;
+		  rotors.(i) @^ ()
+		end
+	     else raise StopTurn
+      done ;
+      x
+    end
+  with StopTurn -> x
 ;;
 
-let shift s =
-    for i = 0 to String.length s - 1 do
-      s.[i] <- (be.[i] >+ (al.[i] >-< s.[i]))
-    done
+
+(** Main encryption function *)
+type symbol = char
+type private_key = string array * string * (char * char) list * int array
+
+let encrypt_symbol
+    (x : symbol)
+    ((rotors, reflector, plugboard, shift_index) : private_key)
+    : symbol =
+  (((((((((x
+	    @% plugboard)
+	   @* (rotors, Right))
+	  @* (rotors, Middle))
+	 @* (rotors, Left))
+	@$ reflector)
+      @* (rotors, Left))
+     @* (rotors, Middle))
+    @* (rotors, Right))
+   @^^^ (rotors, shift_index))
+  @% plugboard
 ;;
+    
 
-beta.[9] >+ (alpha.[9] >-< 'Z');;
-alpha.[9] >-< 'Z';;
-beta.[9];;
+(** An example *)
 
-let ( >+ ) = fun char n -> char_of_int ((((int_of_char char - int_of_char 'A') + n) mod 6) + int_of_char 'A');;
-let ( >-< ) = fun c1 c2 -> int_of_char c1 - int_of_char c2
-;;
+(* Rotor wiring tables extracted from Enigma I machines *)
+let enigmaI_rotor_I = "EKMFLGDQVZNTOWYHXUSPAIBRCJ"
+and enigmaI_rotor_II = "AJDKSIRUXBLHWTMCQGZNPYFVOE"
+and enigmaI_rotor_III = "BDFHJLCPRTXVZNYEIWGAKMUSQO"
 
-(* HERE *)
+let rot0 = [| enigmaI_rotor_I ; enigmaI_rotor_II ; enigmaI_rotor_III |];;
+let pb0 =
+  [('A', 'D') ; ('C', 'N') ; ('E', 'T') ; ('F', 'L') ;
+   ('G', 'I') ; ('J', 'V') ; ('K', 'Z') ; ('P', 'U') ;
+   ('Q', 'Y') ; ('W', 'X')];;
+let wide_b_refl = "YRUHQSLDPXNGOKMIEBFZCWVJAT";;
+let sh0 = Array.map (fun rotor -> 0) rot0;;
 
-let s0 = "EAFBDC";;
-let alpha = "ABCDEF";;
-let beta = "BCDEFA";;
-
-s0;;
-
-shift s0;;
-shift s0;;
-shift s0;;
-shift s0;;
-
-s0.[0] <- (be.[0] >+ (al.[0] >-< s0.[0]));;
-s0;;
-
-'A' @* (rot0, Left);;
-'A' @$ wide_b_refl;;
-'A' @! pb0;; 
-
-(rot0, sh0);;
-rot0 @^ sh0;;
-(rot0, sh0);;
-
-rot0 @^ sh0;;
-rot0 @^ sh0;;
-rot0 @^ sh0;;
-rot0 @^ sh0;;
-rot0 @^ sh0;;
-rot0 @^ sh0;;
-rot0 @^ sh0;;
-rot0 @^ sh0;;
-rot0 @^ sh0;;
-rot0 @^ sh0;;
-rot0 @^ sh0;;
-rot0 @^ sh0;;
-rot0 @^ sh0;;
-rot0 @^ sh0;;
-rot0 @^ sh0;;
-
-
-
-let ( >+ ) = fun char n -> char_of_int ((((int_of_char char - int_of_char 'A') + n) mod 26) + int_of_char 'A');;
-let ( >-< ) = fun c1 c2 -> int_of_char c1 - int_of_char c2
-;;
-
-let encrypt_symbol x (rotors, reflector, playboard, shift_index) =
-  (((x @! playboard) @* (rotors, Right)) @* (rotors, Middle)) @* (rotors, Left) ...
-
-
-
-exception Found of int;;
-let rotor_assoc_inv x r =
-  let no_of_x_in_r () =
-    for i = 0 to (String.length r) - 1 do
-      if r.[i] = x then raise (Found i)
-    done ; '?' in
-  try (no_of_x_in_r ()) with | Found i -> char_of_int (i + 65)
-;;
-
-let encrypt_symbol (x, conf) = 
-  let plugboard_1 = sym_assoc x plugboard in
-  
+(* Entry-point *)
+encrypt_symbol 'A' (rot0, wide_b_refl, pb0, sh0);;
