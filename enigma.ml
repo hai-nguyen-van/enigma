@@ -28,19 +28,19 @@ let ( >-< ) = fun c1 c2 -> int_of_char c1 - int_of_char c2
 
 (** Rotor *)
 type position = Left | Middle | Right
-let ( @* ) = fun char (rotors, pos) ->
+let ( @* ) = fun (rotors, pos) char ->
   let no_of_x = (int_of_char char) - (int_of_char 'A') in
   (rotors. (match pos with Left -> 0 | Middle -> 1 | Right -> 2)). [no_of_x];;
 
 (** Reflector *)
-let ( @$ ) = fun char reflector ->
+let ( @$ ) = fun reflector char ->
   let no_of_x = (int_of_char char) - (int_of_char 'A') in
   reflector.[no_of_x];;
 
 (** Plugboard *)
 let ( @% ) =
   let list_op l = List.map (fun (x, y) -> (y, x)) l in
-  fun char plugboard -> try (List.assoc char plugboard) with
+  fun plugboard char -> try (List.assoc char plugboard) with
     | Not_found -> (try (List.assoc char (list_op plugboard)) with
 	 | Not_found -> char
     );;
@@ -49,7 +49,7 @@ let ( @% ) =
 exception StopTurn;;
 
 (* Rotor one step *)
-let ( @^ ) = fun s _ ->
+let ( @^ ) = fun _ s ->
   let shifts = List.map2 (fun x y -> x >-< y) (explode s) (explode alphabet) in
   let shifts_turned = match shifts with
     | h :: l -> l @ [h]
@@ -61,7 +61,8 @@ let ( @^ ) = fun s _ ->
 ;;
 
 (* Rotors turnover by lexicographic enumeration *)
-let ( @^^^ ) = fun x (rotors, shift_index) ->
+(* BUG: use turnover positiions RFW instead of simply counting rotor steps *)
+let ( @^^^ ) = fun (rotors, shift_index) x ->
   let alphabet_size = String.length alphabet in
   try
     begin
@@ -69,13 +70,13 @@ let ( @^^^ ) = fun x (rotors, shift_index) ->
 	 match i with
 	   | 0 -> 
 	     shift_index.(0) <- (shift_index.(0) + 1) mod alphabet_size ;
-	     rotors.(0) @^ ()
+	     () @^ rotors.(0)
 	   | _ ->
 	     if shift_index.(i - 1) = 0
 	     then
 		begin
 		  shift_index.(i) <- (shift_index.(i) + 1) mod alphabet_size ;
-		  rotors.(i) @^ ()
+ 		  () @^ rotors.(i)
 		end
 	     else raise StopTurn
       done ;
@@ -89,23 +90,23 @@ let ( @^^^ ) = fun x (rotors, shift_index) ->
 type symbol = char
 type private_key = string array * string * (char * char) list * int array
 
+(* Here, the input [x] comes at the "right-most" part of the term *)
 let encrypt_symbol
     (x : symbol)
     ((rotors, reflector, plugboard, shift_index) : private_key)
     : symbol =
-  (((((((((x
-	    @% plugboard)
-	   @* (rotors, Right))
-	  @* (rotors, Middle))
-	 @* (rotors, Left))
-	@$ reflector)
-      @* (rotors, Left))
-     @* (rotors, Middle))
-    @* (rotors, Right))
-   @^^^ (rotors, shift_index))
-  @% plugboard
+  plugboard @% (
+    (rotors, shift_index) @^^^ (
+      (rotors, Right) @* (
+	 (rotors, Middle) @* (
+	   (rotors, Left) @* (
+	     reflector @$ (
+		(rotors, Left) @* (
+		  (rotors, Middle) @* (
+		    (rotors, Right) @* (
+		      plugboard @% 
+			 x)))))))));;
 ;;
-    
 
 (** An example *)
 
